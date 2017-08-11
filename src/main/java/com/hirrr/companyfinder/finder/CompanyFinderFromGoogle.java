@@ -14,11 +14,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.log4j.Logger;
+import org.hirrr.companynamefinder.CompanyNameIdentifier;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
 import com.hirrr.companyfinder.commonfields.CommonFields;
+import com.hirrr.companyfinder.utitlities.ConsultancyCheck;
 import com.hirrr.companyfinder.utitlities.GetDbConnection;
 import com.hirrr.companyfinder.utitlities.GetDocumentUtil;
 import com.hirrr.companyfinder.utitlities.MagicNumbers;
@@ -38,6 +40,7 @@ public class CompanyFinderFromGoogle {
 	private ResultSet resultSet = null;
 	private CommonFields commonFields = new CommonFields();
 	private String urlFoundStatus = "URL FOUND" ;
+	
 	
 	/**
 	 * Read jobsnatcher input company names from text file
@@ -122,7 +125,108 @@ public class CompanyFinderFromGoogle {
 		
 		processingOfFiftyUrls(fiftySearchResultUrlsFromGoogle, domainUrlForSearchedCompanyName, hasUrlStatus);
 		
+		//----------------------------------
+		
+		/**
+		 * Processing company name finder
+		 */
+		
+		
+		processingOfCompanyNameFinder();
+		
+		
+		
+		//----------------------------------
+		
 		return fiftySearchResultUrlsFromGoogle;
+	}
+	
+	/**
+	 * Process of finding the company names for the obtained urls
+	 * updating it in the database
+	 */
+	
+	private void processingOfCompanyNameFinder() {
+		
+		String companyConsultancyString = null;
+		boolean isConsultancyFlag = false;
+		String companyNameObtainedFromCompanyNameFinder = null;
+		String companyUrlFromCoFoundTable = null;
+		String domainUrlFromCoFoundTable = null;
+		final String takeCompanyWithStatusReadyFromCoFoundQuery = "SELECT company_url,domain_url"
+				+ " FROM results_provider_db.co_found where company_status = 'ready'";
+		try {
+			statement = dbConnection.prepareStatement(takeCompanyWithStatusReadyFromCoFoundQuery);
+			resultSet = statement.executeQuery();
+			while(resultSet.next()) {
+				
+				companyUrlFromCoFoundTable = resultSet.getString("company_url");
+				domainUrlFromCoFoundTable = resultSet.getString("domain_url");
+				companyNameObtainedFromCompanyNameFinder = new CompanyNameIdentifier().
+						normalCompanyNameIdentifier(companyUrlFromCoFoundTable);
+				if(!companyNameObtainedFromCompanyNameFinder.isEmpty()) {
+					isConsultancyFlag = getConsultancyMatchFlag(companyNameObtainedFromCompanyNameFinder);
+					
+					if(isConsultancyFlag) {
+						companyConsultancyString = "CONSULTANCY";
+						companyOrConsultancyStatusUpdationInCoFound(companyConsultancyString,
+								companyNameObtainedFromCompanyNameFinder, domainUrlFromCoFoundTable);
+					}else {
+						companyConsultancyString = "COMPANY";
+						companyOrConsultancyStatusUpdationInCoFound(companyConsultancyString,
+								companyNameObtainedFromCompanyNameFinder, domainUrlFromCoFoundTable);
+					}
+				}
+			}
+		
+		}catch (Exception e) {
+			LOGGER.warn(e);
+		}
+		
+	}
+	
+	/**
+	 * Company name updation 
+	 * Company/Consultancy status updation
+	 */
+	private void companyOrConsultancyStatusUpdationInCoFound(String companyConsultancyString, 
+			String companyNameObtainedFromCompanyNameFinder, String domainUrlFromCoFoundTable) {
+		
+		final String companyOrConsultancyStatusUpdationQuery = "update results_provider_db.co_found set"
+				+ " company_status = ?, company_name = ? where domain_url = ?";
+		
+		try {
+			statement = dbConnection.prepareStatement(companyOrConsultancyStatusUpdationQuery);
+			statement.setString(1, companyConsultancyString);
+			statement.setString(2, companyNameObtainedFromCompanyNameFinder);
+			statement.setString(3, domainUrlFromCoFoundTable);
+			statement.executeUpdate();
+
+		} catch (SQLException e) {
+			LOGGER.warn(e);
+		}
+	}
+	
+	/**
+	 * Check for consultancy word & exact match
+	 * @param companyNameObtainedFromCompanyNameFinder
+	 * @return
+	 */
+	
+	private boolean getConsultancyMatchFlag(String companyNameObtainedFromCompanyNameFinder) {
+		boolean isConsultancyFlag = false;
+		
+			try {
+				isConsultancyFlag = ConsultancyCheck.isConsultancy(companyNameObtainedFromCompanyNameFinder);
+				if(!isConsultancyFlag) {
+					isConsultancyFlag = ConsultancyCheck.isExactConsultancy(companyNameObtainedFromCompanyNameFinder);
+				}
+				
+			}catch (Exception e) {
+				LOGGER.warn(e);
+			}
+		
+		return isConsultancyFlag;
 	}
 	
 	/**

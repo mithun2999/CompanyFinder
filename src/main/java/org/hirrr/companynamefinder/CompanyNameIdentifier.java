@@ -1,14 +1,8 @@
-/*
- * Jobsnatcher, career url finding utility tool.
- * Copyright 2016 (C) <UMN Networks Private Limited>
- * Jobsnatcher company name identification module
- * Created based on some assumpitons like company name will be present in Copyright tag
- * Seems to have 60-70%  accuracy
- */
 
 package org.hirrr.companynamefinder;
 
 import java.io.BufferedReader;
+import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -35,10 +29,11 @@ public class CompanyNameIdentifier {
 	private String companyName = null;
 	private FirefoxBinary firefoxBinary = null;
 	private Integer webpageHttpResponseCode = 0;
+	
+	
 	/**
 	 * Company Name Finder for ATS
 	 */
-	
 	
 	public String atsCompanyNameIdentifier(String careerUrl, Boolean headlessFlag){
 		
@@ -339,25 +334,24 @@ public class CompanyNameIdentifier {
 		String temporaryCompanyName = "";
 		
 		try{
-			    firefoxDriver = GetDocumentUtil.getDriver(true);
-				webpageDocument = GetDocumentUtil.loadWebPageSelenium(firefoxDriver, homepageUrl);
+				webpageDocument = GetDocumentUtil.getJsoupDocumentResponse(homepageUrl);
 				
 				textDataFromCopyRightTag = getCompanyNameFromCopyRightTag(webpageDocument);
+				if(!textDataFromCopyRightTag.isEmpty()) {
+					temporaryCompanyName = textDataFromCopyRightTag;
+					
+					temporaryCompanyName = removeUnwantedSiteContentsFromCompanyName(temporaryCompanyName);
+				 
+					temporaryCompanyName = removeUnwantedContentsFromCompanyName(temporaryCompanyName);
+				    		
+				    temporaryCompanyName = temporaryCompanyName.trim();
+				    
+					LOGGER.warn("Final company Name after removing all unwanted Chars : :" +temporaryCompanyName.trim());
+				}else {
+					LOGGER.warn("Company name not found ::");
+				}
 
-				temporaryCompanyName = textDataFromCopyRightTag;
 				
-				temporaryCompanyName = removeUnwantedSiteContentsFromCompanyName(temporaryCompanyName);
-			 
-				temporaryCompanyName = removeUnwantedContentsFromCompanyName(temporaryCompanyName);
-			    		
-			    temporaryCompanyName = temporaryCompanyName.trim();
-			    
-			    if(temporaryCompanyName.isEmpty()||temporaryCompanyName.length() 
-			    		< MagicNumbers.THREE||temporaryCompanyName.length() > MagicNumbers.SIXTY){
-			    	temporaryCompanyName = getCompanyNameFromHomePageUrl(homepageUrl);
-			    }
-			    
-				LOGGER.warn("Final company Name after removing all unwanted Chars : :" +temporaryCompanyName.trim());
 				
 		}catch(Exception e){
 			LOGGER.warn(e);
@@ -595,9 +589,23 @@ public class CompanyNameIdentifier {
 	}
 	
 	
-	public static void main(String[] args) {
-		CompanyNameIdentifier company = new CompanyNameIdentifier();
-		company.normalCompanyNameIdentifier("http://data.danetsoft.com");
+	public static void main(String[] args) throws IOException {
+//		CompanyNameIdentifier company = new CompanyNameIdentifier();
+//		company.normalCompanyNameIdentifier("https://www.indiamart.com");
+		
+		String companyName = null;
+		CompanyNameIdentifier com = new CompanyNameIdentifier();
+		String path = "/home/mithunmanohar/Music/urls.txt";
+		BufferedReader br = null;
+		br = new BufferedReader(new FileReader(path));
+		while((companyName = br.readLine())!=null) {
+			
+			com.normalCompanyNameIdentifier(companyName);
+			
+		}
+		br.close();
+		
+		
 	}
 	
 }

@@ -3,6 +3,9 @@ package com.hirrr.companyfinder.finder;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -13,12 +16,14 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.apache.log4j.Logger;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
+import com.hirrr.companyfinder.utitlities.GetDbConnection;
 import com.hirrr.companyfinder.utitlities.GetDocumentUtil;
 
 public class ConfirmCompanyNameAndUrl {
@@ -41,7 +46,7 @@ public class ConfirmCompanyNameAndUrl {
 		Map<String, Integer> prioritizedUrlList = new TreeMap<>();
 		Map<String, Integer> firstWordMatchUrlList = new LinkedHashMap<>();
 		companyNameSplitArray = companyName.split(" ");
-		LOGGER.info(fiftySearchResultUrlsFromGoogle);
+//		LOGGER.info(fiftySearchResultUrlsFromGoogle);
 		for(String eachSearchResultUrlFromGoogle : fiftySearchResultUrlsFromGoogle) {
 				
 				eachSearchResultUrlFromGoogle = new DomainUrlFinder().domainFinder(eachSearchResultUrlFromGoogle);
@@ -64,7 +69,7 @@ public class ConfirmCompanyNameAndUrl {
 				wordOccurenceCountInUrl = 0;
 		}
 		
-		LOGGER.info(firstWordMatchUrlList);
+		
 		Set<Map.Entry<String, Integer>> prioritizedUrlListSet = null;
 		if(!firstWordMatchUrlList.isEmpty()) {
 			  // get entrySet from HashMap object
@@ -73,6 +78,8 @@ public class ConfirmCompanyNameAndUrl {
 		}else {
 			 prioritizedUrlListSet = prioritizedUrlList.entrySet();
 		}
+		
+		LOGGER.info(prioritizedUrlListSet);
 		 
         // convert HashMap to List of Map entries
         List<Map.Entry<String, Integer>> companyFounderListEntry = 
@@ -100,8 +107,8 @@ public class ConfirmCompanyNameAndUrl {
  
         // iterate LinkedHashMap to retrieved stored values
         for(Map.Entry<String, Integer> lhmap : companyFounderLHMap.entrySet()){
-        	LOGGER.info("Key : "  + lhmap.getKey() + "\t\t"
-                    + "Value : "  + lhmap.getValue());
+//        	LOGGER.info("Key : "  + lhmap.getKey() + "\t\t"
+//                    + "Value : "  + lhmap.getValue());
         	if(lhmap.getValue() > 0) {
         		domainUrlFromGoogleSearchResult = lhmap.getKey();
         		hasUrlMatchFlag = true;
@@ -111,11 +118,13 @@ public class ConfirmCompanyNameAndUrl {
        
         
         if(hasUrlMatchFlag) {
-        	 LOGGER.info("Domain Url Found From Google :"+domainUrlFromGoogleSearchResult);
+        	 LOGGER.info("Domain Url Found From Google--->"+domainUrlFromGoogleSearchResult);
         }else {
-        	domainUrlFromGoogleSearchResult = "";
-        	LOGGER.info("Domain Url does not exist");
+        	domainUrlFromGoogleSearchResult = "not found";
+        	LOGGER.info("Domain Url does not exist--->"+domainUrlFromGoogleSearchResult);
         }
+        
+        statusUpdationInTable(companyName, prioritizedUrlListSet, domainUrlFromGoogleSearchResult);
         
 		return domainUrlFromGoogleSearchResult;
 	}
@@ -191,6 +200,24 @@ public class ConfirmCompanyNameAndUrl {
 		return urlsFromGoogleSearchResultList;
 	}
 	
+	private void statusUpdationInTable(String companyName,Set<Map.Entry<String, Integer>> prioritizedUrlListSet, String fixedUrl) {
+		PreparedStatement statement = null;
+		Connection connection = GetDbConnection.getDbConnection();
+		final String query = "insert into results_provider_db.domainFinderAnalysis (company_name,shortlisted_urls,fixed_url) values (?,?,?)";
+		try {
+			statement = connection.prepareStatement(query);
+			statement.setString(1, companyName);
+			statement.setString(2, prioritizedUrlListSet.toString());
+			statement.setString(3, fixedUrl);
+			statement.executeUpdate();
+			LOGGER.info("Inserted");
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+		
+	}
+	
+	
 	
 	public static void main(String[] args) throws InterruptedException, IOException {
 			String companyName = null;
@@ -198,16 +225,21 @@ public class ConfirmCompanyNameAndUrl {
 			BufferedReader br = null;
 			br = new BufferedReader(new FileReader(path));
 			while((companyName = br.readLine())!=null) {
-			LOGGER.info("Company name :"+companyName);
-			Document googleSearchResultDocument = null;
-			String urlToSearchInGoogle = null;
-			List<String> fiftySearchResultUrlsFromGoogle = new ArrayList<>();
-			urlToSearchInGoogle = getPreferredSearchEngineUrl(companyName).replaceAll(" ", "+").trim();	
-			googleSearchResultDocument = GetDocumentUtil.getJsoupDocumentResponse(urlToSearchInGoogle);//Replacing space by + symbol to make the search query
-			fiftySearchResultUrlsFromGoogle = urlsFromGoogleSearchResultList(urlToSearchInGoogle, googleSearchResultDocument);
-			ConfirmCompanyNameAndUrl com = new ConfirmCompanyNameAndUrl();
-			com.getConfirmedDomainUrlForCompanyName(companyName, fiftySearchResultUrlsFromGoogle);
-			LOGGER.info("Completed");
+				LOGGER.info("Company name :"+companyName);
+				Document googleSearchResultDocument = null;
+				String urlToSearchInGoogle = null;
+				List<String> fiftySearchResultUrlsFromGoogle = new ArrayList<>();
+				urlToSearchInGoogle = getPreferredSearchEngineUrl(companyName.trim()).replaceAll(" ", "+").trim();	
+				int min = 10000;
+				int max = 60000;
+				int randomNum = ThreadLocalRandom.current().nextInt(min, max + 1);
+				Thread.sleep(randomNum);
+				googleSearchResultDocument = GetDocumentUtil.getJsoupDocumentResponse(urlToSearchInGoogle);//Replacing space by + symbol to make the search query
+				fiftySearchResultUrlsFromGoogle = urlsFromGoogleSearchResultList(urlToSearchInGoogle, googleSearchResultDocument);
+				ConfirmCompanyNameAndUrl com = new ConfirmCompanyNameAndUrl();
+				com.getConfirmedDomainUrlForCompanyName(companyName, fiftySearchResultUrlsFromGoogle);
+				LOGGER.info("Completed");
+				
 		}
 			br.close();
 	}
