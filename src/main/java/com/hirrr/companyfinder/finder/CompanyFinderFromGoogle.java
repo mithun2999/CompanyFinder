@@ -14,11 +14,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.log4j.Logger;
-import org.apache.tools.ant.MagicNames;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
-import org.springframework.core.type.StandardAnnotationMetadata;
 
 import com.hirrr.companyfinder.commonfields.CommonFields;
 import com.hirrr.companyfinder.utitlities.GetDbConnection;
@@ -38,7 +36,8 @@ public class CompanyFinderFromGoogle {
 	private Connection dbConnection = null;
 	private PreparedStatement statement = null;
 	private ResultSet resultSet = null;
-	private String domainUrl = null;
+	private CommonFields commonFields = new CommonFields();
+	private String urlFoundStatus = "URL FOUND" ;
 	
 	/**
 	 * Read jobsnatcher input company names from text file
@@ -58,6 +57,7 @@ public class CompanyFinderFromGoogle {
 				while (resultSet.next()) {
 					try{
 						companyNameFromCoData = resultSet.getString("company_name");
+						commonFields.setCompanyName(companyNameFromCoData);
 						getFiftySearchResultUrlsFromGoogle(companyNameFromCoData);
 					}catch(Exception e){
 						LOGGER.warn("Exception in reading company name");
@@ -83,6 +83,9 @@ public class CompanyFinderFromGoogle {
 	
 	private List<String> getFiftySearchResultUrlsFromGoogle(String companyName) throws InterruptedException {
 		
+		String domainUrlForSearchedCompanyName = null;
+		String hasUrlStatus = null;
+		final String urlNotFoundStatus = "URL NOT FOUND" ;
 		String urlToSearchInGoogle = null;
 		Document googleSearchResultDocument = null;
 		List<String> fiftySearchResultUrlsFromGoogle ;
@@ -95,14 +98,71 @@ public class CompanyFinderFromGoogle {
 		LOGGER.warn("Search URL : :"+urlToSearchInGoogle);
 	
 		googleSearchResultDocument = GetDocumentUtil.getJsoupDocumentResponse(urlToSearchInGoogle);
-	
+		
 		fiftySearchResultUrlsFromGoogle = urlsFromGoogleSearchResultList(urlToSearchInGoogle, googleSearchResultDocument);
+		
+		//---------------------------------
+		
+		domainUrlForSearchedCompanyName = new ConfirmCompanyNameAndUrl().
+				getConfirmedDomainUrlForCompanyName(companyName, fiftySearchResultUrlsFromGoogle);
+	
+		if(!domainUrlForSearchedCompanyName.isEmpty()) {
+			
+			processingOfSearchCompany(domainUrlForSearchedCompanyName, companyName);
+			hasUrlStatus = urlFoundStatus;
+			statusUpdationOfDomainUrlInCoDataTable(urlFoundStatus, companyName);
+		}else {
+			hasUrlStatus = urlNotFoundStatus;
+			statusUpdationOfDomainUrlInCoDataTable(urlNotFoundStatus, companyName);
+		}
+		
+		//----------------------------------
 		
 		LOGGER.warn("First 50 search result urls >> After Search : "+fiftySearchResultUrlsFromGoogle);
 		
-		processingOfFiftyUrls(fiftySearchResultUrlsFromGoogle);
+		processingOfFiftyUrls(fiftySearchResultUrlsFromGoogle, domainUrlForSearchedCompanyName, hasUrlStatus);
 		
 		return fiftySearchResultUrlsFromGoogle;
+	}
+	
+	/**
+	 * Updating the status field of co-data table.
+	 * If the domain url is obtained, it will be URL FOUND else URL NOT FOUND
+	 */
+	
+	private void statusUpdationOfDomainUrlInCoDataTable(String urlFoundStatus, String companyName) {
+		
+		final String urlFoundStatusUpdationQuery = "update results_provider_db.co_data set status = ? where company_name = ?";
+		try {
+			statement = dbConnection.prepareStatement(urlFoundStatusUpdationQuery);
+			statement.setString(1, urlFoundStatus);
+			statement.setString(2, companyName);
+			statement.executeUpdate();
+
+		} catch (SQLException e) {
+			LOGGER.warn(e);
+		}
+	}
+	
+	
+	/**
+	 * Inserting the exact domain url for the searched company
+	 * @param domainUrlForSearchedCompanyName
+	 */
+	
+	private void processingOfSearchCompany(String domainUrlForSearchedCompanyName, String companyName) {
+		final String addProtocol = "http://www.";
+		commonFields.setDomainUrl(domainUrlForSearchedCompanyName);
+		commonFields.setCompanyFinderStatus("ready");
+		commonFields.setCompanyName(companyName);
+		commonFields.setDateTime(new Date()+"");
+		commonFields.setCompanyUrl(addProtocol+domainUrlForSearchedCompanyName);
+		
+		try {
+			insertIntoCompanyFinderTable(commonFields,"input");
+		}catch (Exception e) {
+			LOGGER.warn("Exception in insertion to database");
+		}
 	}
 	
 	
@@ -112,8 +172,8 @@ public class CompanyFinderFromGoogle {
 	 *
 	 */
 	
-	private void processingOfFiftyUrls(List<String> fiftySearchResultUrlsFromGoogle) {
-		CommonFields commonFields = new CommonFields();
+	private void processingOfFiftyUrls(List<String> fiftySearchResultUrlsFromGoogle, String domainUrlForSearchedCompanyName, String hasUrlStatus) {
+		
 		commonFields.setCompanyFinderStatus("ready");
 		commonFields.setDateTime(new Date()+"");
 		
@@ -124,7 +184,16 @@ public class CompanyFinderFromGoogle {
 			commonFields.setCompanyUrl(singleUrlFromSearchResult);
 			commonFields.setDomainUrl(new DomainUrlFinder().domainFinder(singleUrlFromSearchResult));
 			
-			insertIntoCompanyFinderTable(commonFields);		//Inserting into co-found table
+			/**
+			 * Removing already processed domain url from fifty search result
+			 */
+			
+			if((commonFields.getDomainUrl().contains(domainUrlForSearchedCompanyName))
+					&&(hasUrlStatus.contains(urlFoundStatus))) {
+				continue;
+			}
+			
+			insertIntoCompanyFinderTable(commonFields,"fifty");		//Inserting into co-found table
 			
 			}catch (Exception e) {
 				LOGGER.warn("Exception in insertion to database");
@@ -139,13 +208,16 @@ public class CompanyFinderFromGoogle {
 	 * @throws SQLException
 	 */
 	
-	public void insertIntoCompanyFinderTable(CommonFields commonFields) throws SQLException{
-		
+	public void insertIntoCompanyFinderTable(CommonFields commonFields, String source) throws SQLException{
+		String domainUrl = null;
 		final String duplicateDomainUrlMessage = "Duplicate entry";
 		final String insertIntoCompanyFinderQuery = "insert into results_provider_db.co_found"
 				+ "(company_name,company_url,domain_url,company_status,duplicate_count,status,date_time) values (?,?,?,?,?,?,?)";
 		
-		commonFields.setCompanyName("");
+		if(!source.contains("input")) {
+			commonFields.setCompanyName("");
+		}
+		
 		commonFields.setStatus("");
 		commonFields.setDuplicateCount(0);
 		try {
@@ -158,7 +230,7 @@ public class CompanyFinderFromGoogle {
 			statement.setInt(MagicNumbers.FIVE, commonFields.getDuplicateCount());
 			statement.setString(MagicNumbers.SIX, commonFields.getStatus());
 			statement.setString(MagicNumbers.SEVEN, commonFields.getDateTime());
-			System.out.println(statement);
+			
 			int queryUpdationResultCount = statement.executeUpdate();
 			GetDbConnection.getDbUpdationStatus(queryUpdationResultCount);
 		}catch (Exception e) {
@@ -168,8 +240,6 @@ public class CompanyFinderFromGoogle {
 				updateDuplicateDomainUrlCount(domainUrl); 
 			}
 			LOGGER.warn(e);
-		}finally {
-			GetDbConnection.closeDbResources(dbConnection, statement, resultSet );
 		}
 	}
 	
@@ -199,8 +269,8 @@ public class CompanyFinderFromGoogle {
 	 */
 	
 	private void updateDuplicateDomainUrlCount(String domainUrl) {
-		final String domainUrlDuplicationCheckQuery = "select count(*) from results_provider_db.co_found where domain_url = ?";
-		final String updateUrlRepetitionCountQuery = "update results_provider_db.co_found set duplicate_count = ?, set date_time where domain_url = ?";
+		final String domainUrlDuplicationCheckQuery = "select duplicate_count from results_provider_db.co_found where domain_url = ?";
+		final String updateUrlRepetitionCountQuery = "update results_provider_db.co_found set duplicate_count = ?, date_time = ? where domain_url = ?";
 		Integer urlDuplicateCount = 0 ;
 		
 		try {
@@ -307,11 +377,10 @@ public class CompanyFinderFromGoogle {
 		
 		String searchUrlMadeByAddingCareerStringToCompanyName ;
 		final String googleSearchEngine = "https://www.google.co.in/search?num=50&q=";
-		final String careerString = " careers";
 		final String character = "&";
 		final String UtfEight = "%26";
 	
-		searchUrlMadeByAddingCareerStringToCompanyName = googleSearchEngine + companyName.replace(character, UtfEight) + careerString ;
+		searchUrlMadeByAddingCareerStringToCompanyName = googleSearchEngine + companyName.replace(character, UtfEight) ;
 		
 		return searchUrlMadeByAddingCareerStringToCompanyName;
 	}
